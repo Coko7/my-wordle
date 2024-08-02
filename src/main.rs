@@ -11,18 +11,23 @@ use rocket::serde::Serialize;
 use std::fs;
 
 #[derive(Debug, Serialize)]
-struct GuessWordFeedback {
+struct GuessFeedback {
     letters: Vec<LetterFeedback>,
+    success: bool,
+    remaining_attempts: u32,
 }
 
-impl GuessWordFeedback {
-    fn compare_to_sol(guess: &str, actual: &str) -> GuessWordFeedback {
+impl GuessFeedback {
+    fn compare_to_sol(guess: &str, actual: &str) -> GuessFeedback {
         let mut feeds = Vec::with_capacity(5);
+        let mut good_count = 0;
+
         for (i, c) in guess.chars().enumerate() {
             let letter_status: LetterStatus;
 
             if actual.chars().nth(i).unwrap() == c {
                 letter_status = LetterStatus::Good;
+                good_count = good_count + 1;
             } else if actual.contains(c) {
                 letter_status = LetterStatus::WrongPos;
             } else {
@@ -32,7 +37,14 @@ impl GuessWordFeedback {
             feeds.push(LetterFeedback::new(c, letter_status));
         }
 
-        GuessWordFeedback { letters: feeds }
+        let success = good_count == guess.len();
+        let remaining_attempts = 5;
+
+        GuessFeedback {
+            letters: feeds,
+            success,
+            remaining_attempts,
+        }
     }
 
     fn to_simple_feedback(&self) -> String {
@@ -47,6 +59,9 @@ impl GuessWordFeedback {
 
             res.push_str(status_num);
         }
+
+        res.push_str(if self.success { ":ye" } else { ":no" });
+        res.push_str(&format!(":{}", self.remaining_attempts));
 
         res
     }
@@ -85,17 +100,17 @@ fn spoil() -> String {
 fn guess_word(guess: &str) -> Result<String, Status> {
     if guess.len() == 5 {
         let actual = get_daily_word();
-        Ok(GuessWordFeedback::compare_to_sol(&guess, &actual).to_simple_feedback())
+        Ok(GuessFeedback::compare_to_sol(&guess, &actual).to_simple_feedback())
     } else {
         Err(Status::BadRequest)
     }
 }
 
 #[post("/guess-json", data = "<guess>")]
-fn guess_word_json(guess: &str) -> Result<Json<GuessWordFeedback>, Status> {
+fn guess_word_json(guess: &str) -> Result<Json<GuessFeedback>, Status> {
     if guess.len() == 5 {
         let actual = get_daily_word();
-        Ok(Json(GuessWordFeedback::compare_to_sol(&guess, &actual)))
+        Ok(Json(GuessFeedback::compare_to_sol(&guess, &actual)))
     } else {
         Err(Status::BadRequest)
     }
@@ -108,11 +123,23 @@ fn rocket() -> _ {
 
 fn get_daily_word() -> String {
     let file_path = "./words.txt";
-    let contents = fs::read_to_string(file_path).expect("Should have been able to read file");
 
-    let words: Vec<&str> = contents.split(',').collect();
+    let words = read_lines(file_path);
     let today: u64 = Utc::now().ordinal().into();
     let mut rng = ChaCha8Rng::seed_from_u64(today);
 
     words.choose(&mut rng).unwrap().to_string()
+}
+
+fn read_lines(filename: &str) -> Vec<String> {
+    let mut result = Vec::new();
+
+    for line in fs::read_to_string(filename)
+        .expect("Failed to read file")
+        .lines()
+    {
+        result.push(line.to_string())
+    }
+
+    result
 }
