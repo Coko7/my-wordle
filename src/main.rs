@@ -8,7 +8,19 @@ use rand_chacha::ChaCha8Rng;
 use rocket::http::Status;
 use rocket::serde::json::Json;
 use rocket::serde::Serialize;
+use serde::de::Error;
 use std::fs;
+
+#[derive(Responder)]
+pub enum ApiResponse<T> {
+    Ok(T),
+    #[response(status = 400)]
+    BadRequest(String),
+    #[response(status = 401)]
+    Unauthorized(String),
+    #[response(status = 403)]
+    Forbidden(String),
+}
 
 #[derive(Debug, Serialize)]
 struct GuessFeedback {
@@ -96,23 +108,33 @@ fn spoil() -> String {
     get_daily_word()
 }
 
-#[post("/guess", data = "<guess>")]
-fn guess_word(guess: &str) -> Result<String, Status> {
+fn process_guess(guess: &str) -> Result<GuessFeedback, String> {
     if guess.len() == 5 {
+        let all_words = get_words();
+        if !all_words.contains(&guess.to_string()) {
+            return Err("not a word!".to_string());
+        }
+
         let actual = get_daily_word();
-        Ok(GuessFeedback::compare_to_sol(&guess, &actual).to_simple_feedback())
+        Ok(GuessFeedback::compare_to_sol(&guess, &actual))
     } else {
-        Err(Status::BadRequest)
+        Err("only 5 letter words are allowed!".to_string())
+    }
+}
+
+#[post("/guess", data = "<guess>")]
+fn guess_word(guess: &str) -> ApiResponse<String> {
+    match process_guess(&guess) {
+        Ok(val) => ApiResponse::Ok(val.to_simple_feedback()),
+        Err(message) => ApiResponse::BadRequest(message),
     }
 }
 
 #[post("/guess-json", data = "<guess>")]
-fn guess_word_json(guess: &str) -> Result<Json<GuessFeedback>, Status> {
-    if guess.len() == 5 {
-        let actual = get_daily_word();
-        Ok(Json(GuessFeedback::compare_to_sol(&guess, &actual)))
-    } else {
-        Err(Status::BadRequest)
+fn guess_word_json(guess: &str) -> ApiResponse<Json<GuessFeedback>> {
+    match process_guess(&guess) {
+        Ok(val) => ApiResponse::Ok(Json(val)),
+        Err(message) => ApiResponse::BadRequest(message),
     }
 }
 
@@ -122,13 +144,16 @@ fn rocket() -> _ {
 }
 
 fn get_daily_word() -> String {
-    let file_path = "./words.txt";
-
-    let words = read_lines(file_path);
+    let words = get_words();
     let today: u64 = Utc::now().ordinal().into();
     let mut rng = ChaCha8Rng::seed_from_u64(today);
 
     words.choose(&mut rng).unwrap().to_string()
+}
+
+fn get_words() -> Vec<String> {
+    let file_path = "./words.txt";
+    read_lines(file_path)
 }
 
 fn read_lines(filename: &str) -> Vec<String> {
